@@ -38,8 +38,8 @@
 .member-card-bio { margin: 11px 0 0; color: #a9ada1; font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
 .member-card-edit { width: 100%; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin-top: 12px; color: #17190f; border: 0; border-radius: 4px; background: var(--lime); font: inherit; font-size: 9px; font-weight: 700; cursor: pointer; }
 .member-card-close { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; display: grid; place-items: center; padding: 0; color: #edefe3; border: 1px solid rgba(255,255,255,.26); border-radius: 4px; background: rgba(9,12,8,.45); backdrop-filter: blur(6px); cursor: pointer; }
-.member-card-scrim { position: fixed; z-index: 80; inset: 0; display: flex; align-items: flex-end; background: rgba(5,7,5,.62); backdrop-filter: blur(3px); }
-.member-card.is-sheet { position: static; width: 100%; max-height: 82svh; overflow-y: auto; border-radius: 8px 8px 0 0; animation: sheet-rise .2s ease both; }
+.member-card-scrim { position: fixed; z-index: 80; inset: 0; background: rgba(5,7,5,.62); backdrop-filter: blur(3px); }
+.member-card.is-sheet { position: fixed; top: auto; right: 0; bottom: 0; left: 0; width: auto; max-height: 86svh; overflow-y: auto; border-radius: 8px 8px 0 0; padding-bottom: 8px; animation: sheet-rise .2s ease both; }
 @keyframes sheet-rise { from { transform: translateY(18px); opacity: .7; } to { transform: none; opacity: 1; } }
 
 /* Crop dialog */
@@ -80,6 +80,7 @@
 
 @media (max-width: 760px) {
   .member-card { width: 100%; }
+  .member-card-banner { height: 88px; }
 }
 
 @media (max-width: 600px) {
