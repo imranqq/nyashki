@@ -4,10 +4,8 @@ services:
     runtime: node
     plan: free
     region: frankfurt
-    buildCommand: npm ci && npm run build
+    # Render sets NODE_ENV=production during the build, which would skip Vite and TypeScript.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /
     autoDeploy: true
-    envVars:
-      - key: NODE_ENV
-        value: production

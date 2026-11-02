@@ -2,6 +2,8 @@
 
 A real-time watch room with a shared chat, video queue, voting, and host controls.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/imranqq/nyashki)
+
 ## Run locally
 
 ```powershell
