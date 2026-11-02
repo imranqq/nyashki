@@ -117,12 +117,30 @@ function normalizeRoomId(value) {
   return roomId || 'movie-night'
 }
 
+const maxAvatarChars = 8192
+const maxBannerChars = 60000
+const maxBioChars = 120
+
+// Photos arrive as data URLs, so only the allowed schemes and lengths reach the room.
+function normalizeMedia(value, maxChars) {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (!/^https?:\/\//i.test(trimmed) && !/^data:image\//i.test(trimmed)) {
+    // Older avatars kept a short pravatar index instead of a URL.
+    return trimmed.length <= 24 ? trimmed : ''
+  }
+  return trimmed.length <= maxChars ? trimmed : ''
+}
+
 function normalizeUser(user = {}) {
   return {
     id: typeof user.id === 'string' ? user.id.slice(0, 100) : randomUUID(),
     // An empty username means "let the room name this guest".
     username: typeof user.username === 'string' ? user.username.replace(/[^\p{L}\p{N}_. ]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 24) : '',
-    avatar: typeof user.avatar === 'string' && user.avatar.length < 2048 ? user.avatar : '',
+    avatar: normalizeMedia(user.avatar, maxAvatarChars),
+    bio: typeof user.bio === 'string' ? user.bio.replace(/\s+/g, ' ').trim().slice(0, maxBioChars) : '',
+    banner: normalizeMedia(user.banner, maxBannerChars),
   }
 }
 
@@ -155,12 +173,16 @@ function resolveMemberName(room, user, requestedUser) {
   return nextAutoName(room, user.id)
 }
 
+function publicMember(member, room) {
+  return { id: member.id, username: member.username, avatar: member.avatar, isHost: member.id === room.hostId }
+}
+
 function createSnapshot(room) {
   return {
     messages: room.messages,
     queue: room.queue,
     playback: room.playback,
-    members: [...room.members.values()].map((member) => ({ ...member, isHost: member.id === room.hostId })),
+    members: [...room.members.values()].map((member) => publicMember(member, room)),
   }
 }
 
@@ -176,6 +198,24 @@ function broadcastVoice(roomId) {
   const room = rooms.get(roomId)
   if (!room) return
   io.to(roomId).emit('voice:members', [...room.voice.entries()].map(([id, state]) => ({ id, muted: state.muted })))
+}
+
+// Banners are large, so profiles travel only when someone edits them, not with every snapshot.
+function createProfiles(room) {
+  return [...room.members.values()].map((member) => ({
+    id: member.id,
+    username: member.username,
+    avatar: member.avatar,
+    bio: member.bio ?? '',
+    banner: member.banner ?? '',
+    isHost: member.id === room.hostId,
+  }))
+}
+
+function broadcastProfiles(roomId) {
+  const room = rooms.get(roomId)
+  if (!room) return
+  io.to(roomId).emit('room:profiles', createProfiles(room))
 }
 
 function appendSystemMessage(room, text) {
@@ -342,6 +382,7 @@ io.on('connection', (socket) => {
     socket.join(roomId)
     socket.emit('room:state', createSnapshot(room))
     broadcastRoom(roomId)
+    broadcastProfiles(roomId)
   })
 
   socket.on('user:update', (incomingUser = {}) => {
@@ -354,6 +395,7 @@ io.on('connection', (socket) => {
     const username = updated.username || current?.username || nextAutoName(room, userId)
     room.members.set(userId, { ...updated, username, isHost: userId === room.hostId, socketId: current?.socketId ?? socket.id })
     broadcastRoom(roomId)
+    broadcastProfiles(roomId)
   })
 
   socket.on('chat:send', (payload = {}) => {
@@ -508,6 +550,7 @@ io.on('connection', (socket) => {
     if (member?.socketId === socket.id) room.members.delete(socket.data.userId)
     if (room.hostId === socket.data.userId && !room.members.has(room.hostId)) room.hostId = [...room.members.keys()].at(-1) ?? null
     if (leftVoice) broadcastVoice(roomId)
+    if (member) broadcastProfiles(roomId)
     broadcastRoom(roomId)
   })
 })

@@ -24,9 +24,15 @@ Open `http://localhost:5173/`. The command starts both the Vite app and the Sock
 
 ## Invite friends
 
-**Пригласить** opens the room dialog: the share link, the room code, and a field to join another room by its code. A code can be a bare value like `71467f2a-ce5` or a whole link — the room part is taken from it.
+**Пригласить** opens the room dialog: the share link, the room code, and a field to join another room by its code. A code can be a bare value like `71467f2a-ce5` or a whole link — the room part is taken from it. **Все комнаты** leaves the room and returns to the lobby.
 
-A room lives in the `?room=` part of the URL. Opening the bare site address (no `?room=`) creates a brand new room, so a friend who typed the domain instead of using the link sits alone — send the link, or tell them the room code and use **Войти по коду**. On `localhost` the copied link only works on that computer; open the site by the tunnel address and copy the link there.
+A room lives in the `?room=` part of the URL. Opening the bare site address (no `?room=`) shows the lobby: recent rooms on this device, a code field, and **Создать комнату**, which makes a fresh code and enters it immediately. Every room you open is remembered in `localStorage` under `nyashki-recent-rooms`, up to eight entries, and can be removed from the list without deleting the room itself. A friend who typed the domain instead of using the link lands in the lobby — send the link, or tell them the room code and let them use the code field. On `localhost` the copied link only works on that computer; open the site by the tunnel address and copy the link there.
+
+## Profile
+
+The profile dialog keeps the URL fields for the avatar and the banner and adds **Из галереи**: pick a photo from the device, drag it inside the frame, zoom in, then apply. The avatar is cropped square and compressed to fit the room (about 8 KB), the banner keeps a wide 2.9:1 crop. Nothing is sent until **Сохранить профиль**.
+
+Clicking an avatar in the chat, in the member strip or in the empty-chat roster opens a member card with that person's banner, avatar, name, host badge and bio. Banners and bios travel over a separate `room:profiles` event, so the frequent room updates stay small. The card shows **Редактировать профиль** only for your own account.
 
 ## Share a room
 

@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, Check, ChevronDown, Clapperboard, Crown, ImagePlus, Link2, ListVideo, Lock, Maximize2, MessageCircle, Mic, Minimize2, MoreHorizontal, Pause, Play, Plus, RotateCcw, RotateCw, Send, Smile, ThumbsUp, Upload, Volume2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, ChevronDown, Clapperboard, Crown, ImagePlus, Link2, ListVideo, Lock, Maximize2, MessageCircle, Mic, Minimize2, MoreHorizontal, Pause, Play, Plus, RotateCcw, RotateCw, Send, Smile, ThumbsUp, Volume2 } from 'lucide-react'
 import { io, type Socket } from 'socket.io-client'
+import { MemberCard, type MemberCardAnchor, type MemberCardProfile } from './components/MemberCard'
+import { ProfileDialog } from './components/ProfileDialog'
 import { RoomAccessDialog } from './components/RoomAccessDialog'
+import { RoomLobby } from './components/RoomLobby'
 import { VoicePanel } from './components/VoicePanel'
 import { useVoiceRoom } from './hooks/useVoiceRoom'
 import { getAvatarSource } from './lib/avatar'
+import { autoNamePattern, persistProfile, readPreferredName, readProfile, rememberPreferredName, resolveDisplayName, type Profile } from './lib/profile'
+import { readRoomFromUrl, rememberRoom } from './lib/rooms'
 import './App.css'
+import './styles/lobby.css'
+import './styles/overlays.css'
 
 type ChatMessage = { id?: string; userId?: string; name: string; avatar?: string; text: string; time: string; mine?: boolean; system?: boolean; media?: string; sticker?: boolean }
-type Profile = { username: string; bio: string; avatar: string; banner: string; theme: string }
 type QueueVideo = { id: string; title: string; url: string; addedBy: string; votes: string[]; voterIds?: string[] }
 type RoomMember = { id: string; username: string; avatar: string; isHost: boolean }
 type RoomSnapshot = { messages: ChatMessage[]; queue: QueueVideo[]; members: RoomMember[]; playback: { url: string; title: string; playing: boolean; progress: number; currentTime: number; duration: number } }
@@ -58,58 +64,6 @@ declare global {
 
 let youtubeApiPromise: Promise<YouTubeApi> | null = null
 let vkApiPromise: Promise<VkApi> | null = null
-
-const themes = [
-  { id: 'lime', name: 'Лайм', color: '#d6ff62', ink: '#17190f' },
-  { id: 'graphite', name: 'Чёрный', color: '#f1f1ed', ink: '#171717' },
-  { id: 'coral', name: 'Коралл', color: '#ff907e', ink: '#24130f' },
-  { id: 'sky', name: 'Небо', color: '#82c8ff', ink: '#101a24' },
-  { id: 'teal', name: 'Тёмная бирюза', color: '#35b8aa', ink: '#10201e' },
-]
-
-// An empty username means the room names the guest "Пользователь 1", "Пользователь 2", and so on.
-const defaultProfile: Profile = {
-  username: '',
-  bio: 'люблю кино, ночные прогулки и людей рядом',
-  avatar: 'https://i.pravatar.cc/160?img=11',
-  banner: 'https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?auto=format&fit=crop&w=1200&q=85',
-  theme: 'lime',
-}
-
-const autoNamePattern = /^Пользователь \d{1,3}$/
-// Names that earlier builds used as a default; they are treated as "no name chosen".
-const legacyDefaultNames = new Set(['sasha', 'guest'])
-
-function readProfile(): Profile {
-  try {
-    const stored = localStorage.getItem('nyashki-profile')
-    if (stored) {
-      const saved = JSON.parse(stored) as Partial<Profile>
-      const username = typeof saved.username === 'string' ? saved.username.trim() : ''
-      return { ...defaultProfile, ...saved, username: legacyDefaultNames.has(username.toLowerCase()) ? '' : username }
-    }
-  } catch {
-    // Ignore invalid saved data and use the starter profile.
-  }
-  return defaultProfile
-}
-
-function readPreferredName(): string {
-  try {
-    return localStorage.getItem('nyashki-auto-name') ?? ''
-  } catch {
-    return ''
-  }
-}
-
-// Keeps the assigned number stable across reloads, so a guest stays "Пользователь 2".
-function rememberPreferredName(name: string) {
-  try {
-    localStorage.setItem('nyashki-auto-name', name)
-  } catch {
-    // Storage can be unavailable; the room then hands out a number on every join.
-  }
-}
 
 const emojiGroups = {
   Смайлы: ['😀', '😂', '🥹', '😍', '😎', '🥰', '🤔', '😭', '😴', '🤯', '😅', '🤍'],
@@ -298,37 +252,22 @@ function generateBrowserId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
 }
 
-function getRoomId(): string {
-  const url = new URL(window.location.href)
-  const requestedRoom = url.searchParams.get('room')
-  if (requestedRoom) return requestedRoom
-  try {
-    const storedRoom = localStorage.getItem('nyashki-room-id')
-    if (storedRoom) {
-      url.searchParams.set('room', storedRoom)
-      window.history.replaceState(null, '', url)
-      return storedRoom
-    }
-    const roomId = generateBrowserId().slice(0, 12)
-    localStorage.setItem('nyashki-room-id', roomId)
-    url.searchParams.set('room', roomId)
-    window.history.replaceState(null, '', url)
-    return roomId
-  } catch {
-    return generateBrowserId().slice(0, 12)
-  }
+type WatchRoomProps = {
+  roomId: string
+  profile: Profile
+  theme: string
+  onOpenProfile: () => void
 }
 
-function App() {
-  const [profile, setProfile] = useState<Profile>(readProfile)
+function WatchRoom({ roomId, profile, theme, onOpenProfile }: WatchRoomProps) {
   const youtubeContainerId = `nyashki-youtube-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
   const [clientId] = useState(getClientId)
-  const [roomId] = useState(getRoomId)
-  const [draftProfile, setDraftProfile] = useState<Profile>(profile)
-  const [profileOpen, setProfileOpen] = useState(false)
   const [roomConnected, setRoomConnected] = useState(false)
   const [socket, setSocket] = useState<Socket | null>(null)
   const [preferredName, setPreferredName] = useState(readPreferredName)
+  const [memberProfiles, setMemberProfiles] = useState<Record<string, MemberCardProfile>>({})
+  const [openCard, setOpenCard] = useState<{ memberId: string; anchor: MemberCardAnchor; fallback?: MemberCardProfile } | null>(null)
+  const cardTriggerRef = useRef<HTMLElement | null>(null)
   const [roomError, setRoomError] = useState('')
   const [queueError, setQueueError] = useState('')
   const [members, setMembers] = useState<RoomMember[]>([])
@@ -395,6 +334,11 @@ function App() {
     profileRef.current = profile
   }, [profile])
 
+  // The lobby lists room history, so entering a room records it on this device only.
+  useEffect(() => {
+    rememberRoom(roomId)
+  }, [roomId])
+
   useEffect(() => {
     isHostRef.current = isHost
   }, [isHost])
@@ -406,7 +350,7 @@ function App() {
       setRoomConnected(true)
       setSocket(socket)
       setRoomError('')
-      socket.emit('room:join', { roomId, user: { id: clientId, username: profileRef.current.username, preferredName: profileRef.current.username ? '' : readPreferredName(), avatar: profileRef.current.avatar } })
+      socket.emit('room:join', { roomId, user: { id: clientId, username: profileRef.current.username, preferredName: profileRef.current.username ? '' : readPreferredName(), avatar: profileRef.current.avatar, bio: profileRef.current.bio, banner: profileRef.current.banner } })
     })
     socket.on('disconnect', () => setRoomConnected(false))
     socket.on('connect_error', () => {
@@ -441,6 +385,10 @@ function App() {
       durationRef.current = snapshot.playback.duration
       playingRef.current = snapshot.playback.playing
     })
+    // Banners and bios arrive separately so the frequent state updates stay small.
+    socket.on('room:profiles', (profiles: MemberCardProfile[]) => {
+      setMemberProfiles(Object.fromEntries(profiles.map((member) => [member.id, member])))
+    })
     socket.connect()
     return () => {
       socket.disconnect()
@@ -450,17 +398,9 @@ function App() {
 
   useEffect(() => {
     if (!roomConnected) return
-    socketRef.current?.emit('user:update', { username: profile.username, avatar: profile.avatar })
-  }, [profile.username, profile.avatar, roomConnected])
+    socketRef.current?.emit('user:update', { username: profile.username, avatar: profile.avatar, bio: profile.bio, banner: profile.banner })
+  }, [profile.username, profile.avatar, profile.bio, profile.banner, roomConnected])
 
-  useEffect(() => {
-    if (!profileOpen) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setProfileOpen(false)
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [profileOpen])
 
   useEffect(() => {
     playingRef.current = playing
@@ -970,23 +910,27 @@ function App() {
     }
   }, [activeVideoUrl, currentTime, playing])
 
-  function openProfileEditor() {
-    // A guest without a chosen name sees the one the room gave them, ready to be edited.
-    setDraftProfile({ ...profile, username: profile.username || myName })
-    setProfileOpen(true)
+  function openMemberCard(memberId: string, element: HTMLElement, fallback?: MemberCardProfile) {
+    const rect = element.getBoundingClientRect()
+    cardTriggerRef.current = element
+    setOpenCard({ memberId, fallback, anchor: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height } })
   }
 
-  function saveProfile(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const nextProfile = { ...draftProfile, username: draftProfile.username.trim().replace(/^@/, '') }
-    if (!nextProfile.username) return
-    setProfile(nextProfile)
-    try { localStorage.setItem('nyashki-profile', JSON.stringify(nextProfile)) } catch { /* Keep the edited profile for this session if storage is unavailable. */ }
-    setProfileOpen(false)
+  function closeMemberCard() {
+    setOpenCard(null)
+    cardTriggerRef.current?.focus()
   }
+
+  function editOwnProfile() {
+    closeMemberCard()
+    onOpenProfile()
+  }
+
+  // A guest who already left keeps a card from the message they left behind.
+  const cardMember = openCard ? memberProfiles[openCard.memberId] ?? members.find((member) => member.id === openCard.memberId) ?? openCard.fallback : null
 
   return (
-    <main className="app-shell" data-theme={profileOpen ? draftProfile.theme : profile.theme}>
+    <main className="app-shell" data-theme={theme}>
       <header className="topbar">
         <a className="brand" href="#home" aria-label="nyashki, на главную"><span className="brand-mark"><Clapperboard size={18} strokeWidth={2.5} /></span><span>nyashki<span className="brand-dot">.</span></span></a>
         <div className="topbar-divider" />
@@ -994,7 +938,7 @@ function App() {
         <div className="topbar-spacer" />
         <div className="topbar-watchers" aria-label={`${members.length} участников смотрят`}>{members.slice(0, 4).map((member) => <img key={member.id} src={getAvatarSource(member.avatar, 64)} alt={member.username} />)}{members.length > 4 && <span>+{members.length - 4}</span>}</div>
         <button className="invite-button" type="button" onClick={() => setRoomAccessOpen(true)} aria-haspopup="dialog"><Link2 size={15} />Пригласить</button>
-        <button className="profile-button" type="button" aria-label={`Редактировать профиль ${myName}`} onClick={openProfileEditor}><img src={profile.avatar} alt="" /><span className="profile-presence" /></button>
+        <button className="profile-button" type="button" aria-label={`Открыть профиль ${myName}`} onClick={onOpenProfile}><img src={getAvatarSource(profile.avatar, 64)} alt="" /><span className="profile-presence" /></button>
       </header>
       {roomError && <div className="room-alert" role="status">{roomError}</div>}
 
@@ -1002,7 +946,7 @@ function App() {
         <section className="watch-column" aria-label="Комната просмотра">
           <div className="room-heading"><div><h1>Вечер без планов<span className="heading-period">.</span></h1><p className="room-subtitle">Тихий вечер, хорошее кино и вы все здесь.</p></div><button className="icon-button more-room" type="button" aria-label="Настройки комнаты"><MoreHorizontal size={21} /></button></div>
 
-          <div className="filmstrip" aria-label="Участники комнаты"><div className="filmstrip-label"><span className={`online-count ${roomConnected ? '' : 'is-offline'}`} /><strong>{members.length}</strong> в комнате</div><div className="filmstrip-people">{friends.map((friend) => <div className="mini-person" key={friend.id}><span className={`mini-avatar ${friend.color}`}><img src={getAvatarSource(friend.avatar, 80)} alt="" /></span><span className="mini-name">{friend.name}</span>{friend.isHost && <><Crown size={11} className="host-crown" /><span className="member-host-label">ведущий</span></>}</div>)}</div><span className="watching-label">{activeVideoUrl ? <><span className="equalizer"><i /><i /><i /></span> смотрите вместе</> : 'ждём видео'}</span></div>
+          <div className="filmstrip" aria-label="Участники комнаты"><div className="filmstrip-label"><span className={`online-count ${roomConnected ? '' : 'is-offline'}`} /><strong>{members.length}</strong> в комнате</div><div className="filmstrip-people">{friends.map((friend) => <div className="mini-person" key={friend.id}><button className="avatar-button avatar-button-small" type="button" onClick={(event) => openMemberCard(friend.id, event.currentTarget)} aria-label={`Открыть профиль ${friend.name}`}><span className={`mini-avatar ${friend.color}`}><img src={getAvatarSource(friend.avatar, 96)} alt="" /></span></button><span className="mini-name">{friend.name}</span>{friend.isHost && <><Crown size={11} className="host-crown" /><span className="member-host-label">ведущий</span></>}</div>)}</div><span className="watching-label">{activeVideoUrl ? <><span className="equalizer"><i /><i /><i /></span> смотрите вместе</> : 'ждём видео'}</span></div>
 
           <section className={`player ${activeVideoUrl ? 'has-source' : 'is-empty'}`} aria-label="Видеоплеер">
             {activeVideoUrl ? youtubeVideoId ? <div id={youtubeContainerId} className="player-frame youtube-player-container" /> : directVideo ? <video className="player-video" ref={directVideoRef} src={activeVideoUrl} controls={false} playsInline key={activeVideoUrl} onLoadedMetadata={handleDirectVideoLoaded} onTimeUpdate={(event) => publishMediaPosition(event.currentTarget.currentTime, event.currentTarget.duration)} onPlay={() => { if (!playingRef.current) applySharedPlaying(true) }} onPause={() => { if (playingRef.current) applySharedPlaying(false) }} onEnded={() => applySharedPlaying(false)}>Браузер не поддерживает воспроизведение видео.</video> : videoEmbedUrl ? <iframe className="player-frame" ref={isRutubeVideo ? rutubeFrameRef : isVkVideo ? vkFrameRef : undefined} src={videoEmbedUrl} title={videoTitle} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen /> : <div className="unsupported-video"><Clapperboard size={27} /><h2>Эту страницу нельзя встроить</h2><p>Платформа запрещает показ внутри сайта. Попробуй открыть видео на YouTube, VK Видео или Rutube либо вставь прямую ссылку на MP4/WebM.</p><a href={activeVideoUrl} target="_blank" rel="noreferrer">Открыть источник в новой вкладке <Link2 size={13} /></a></div> : null}
@@ -1051,7 +995,7 @@ function App() {
             <div className={`message-list ${messages.length === 0 ? 'is-empty' : ''}`} ref={messageListRef} onScroll={handleMessageListScroll} aria-live="polite">{messages.length === 0 ? <div className="chat-empty">
               <div className="chat-empty-roster">
                 {members.slice(0, 5).map((member) => <div className="chat-empty-person" key={member.id}>
-                  <span className="chat-empty-avatar"><img src={getAvatarSource(member.avatar, 120)} alt="" />{member.isHost && <span className="chat-empty-crown"><Crown size={11} /></span>}</span>
+                  <button className="avatar-button chat-empty-avatar" type="button" onClick={(event) => openMemberCard(member.id, event.currentTarget)} aria-label={`Открыть профиль ${member.username}`}><img src={getAvatarSource(member.avatar, 120)} alt="" />{member.isHost && <span className="chat-empty-crown"><Crown size={11} /></span>}</button>
                   <span className="chat-empty-name">{member.username}</span>
                   <span className={`chat-empty-role ${member.isHost ? '' : 'is-guest'}`}>{member.isHost ? 'ведущий' : 'смотрит'}</span>
                 </div>)}
@@ -1061,7 +1005,7 @@ function App() {
                   <span className="chat-empty-role is-guest">по ссылке</span>
                 </button>
               </div>
-            </div> : messages.map((item, index) => item.system ? <div className="system-message" key={item.id ?? `${item.time}-${index}`}><span className="system-line" /><span>{item.text}</span><span className="system-line" /></div> : <article className={`message ${item.mine ? 'mine' : ''}`} key={item.id ?? `${item.name}-${item.time}-${index}`}>{!item.mine && <img className="message-avatar" src={getAvatarSource(item.avatar, 64)} alt="" />}<div className="message-body"><div className="message-meta"><strong>{item.mine ? myName : item.name}</strong><time>{item.time}</time></div>{item.media && <img className="message-media" src={item.media} alt={item.text} />}{!item.media && <p className={item.sticker ? 'sticker-message' : ''}>{item.text}</p>}</div></article>)}</div>
+            </div> : messages.map((item, index) => item.system ? <div className="system-message" key={item.id ?? `${item.time}-${index}`}><span className="system-line" /><span>{item.text}</span><span className="system-line" /></div> : <article className={`message ${item.mine ? 'mine' : ''}`} key={item.id ?? `${item.name}-${item.time}-${index}`}>{!item.mine && (item.userId ? <button className="avatar-button" type="button" onClick={(event) => openMemberCard(item.userId ?? '', event.currentTarget, { id: item.userId ?? '', username: item.name, avatar: item.avatar ?? '', isHost: false })} aria-label={`Открыть профиль ${item.name}`}><img className="message-avatar" src={getAvatarSource(item.avatar, 64)} alt="" /></button> : <img className="message-avatar" src={getAvatarSource(item.avatar, 64)} alt="" />)}<div className="message-body"><div className="message-meta"><strong>{item.mine ? myName : item.name}</strong><time>{item.time}</time></div>{item.media && <img className="message-media" src={item.media} alt={item.text} />}{!item.media && <p className={item.sticker ? 'sticker-message' : ''}>{item.text}</p>}</div></article>)}</div>
             <div className="composer-wrap">
               {pickerOpen && <section className="media-picker" aria-label="Выбор эмодзи и медиа"><div className="picker-tabs"><button className={pickerCategory === 'emoji' ? 'is-active' : ''} type="button" onClick={() => setPickerCategory('emoji')}><Smile size={13} />Эмодзи</button><button className={pickerCategory === 'gif' ? 'is-active' : ''} type="button" onClick={() => setPickerCategory('gif')}>GIF</button><button className={pickerCategory === 'sticker' ? 'is-active' : ''} type="button" onClick={() => setPickerCategory('sticker')}>Стикеры</button></div>
                 {pickerCategory === 'emoji' && <><div className="emoji-groups">{(Object.keys(emojiGroups) as (keyof typeof emojiGroups)[]).map((group) => <button className={emojiGroup === group ? 'is-active' : ''} type="button" key={group} onClick={() => setEmojiGroup(group)}>{group}</button>)}</div><div className="emoji-grid">{emojiGroups[emojiGroup].map((emoji, index) => <button type="button" key={`${emoji}-${index}`} onClick={() => setMessage((value) => `${value}${emoji}`)} aria-label={`Добавить ${emoji}`}>{emoji}</button>)}</div></>}
@@ -1076,9 +1020,40 @@ function App() {
         </aside>
       </div>
       <footer className="app-footer"><span>nyashki<span className="brand-dot">.</span> <span className="footer-separator">/</span> вы рядом, даже если далеко</span><span>комната приватная <span className="privacy-dot" /></span></footer>
-      {profileOpen && <div className="profile-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setProfileOpen(false) }}><section className="profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title"><div className="profile-modal-header"><div><span className="profile-modal-kicker">ТВОЯ СТРАНИЦА</span><h2 id="profile-modal-title">Профиль</h2></div><button className="profile-modal-close" type="button" onClick={() => setProfileOpen(false)} aria-label="Закрыть"><X size={19} /></button></div><form onSubmit={saveProfile}><div className="profile-preview"><img className="profile-preview-banner" src={draftProfile.banner || defaultProfile.banner} alt="Баннер профиля" /><div className="profile-preview-shade" /><div className="profile-preview-user"><img src={draftProfile.avatar || defaultProfile.avatar} alt="Аватар профиля" /><div><strong>{draftProfile.username || myName}</strong><span>{draftProfile.bio || 'Здесь пока тихо...'}</span></div></div><span className="preview-label">ПРЕДПРОСМОТР</span></div><fieldset className="theme-picker"><legend>ЦВЕТОВАЯ ТЕМА</legend><div className="theme-options">{themes.map((theme) => <button className={`theme-option ${draftProfile.theme === theme.id ? 'is-selected' : ''}`} type="button" key={theme.id} onClick={() => setDraftProfile((current) => ({ ...current, theme: theme.id }))} aria-pressed={draftProfile.theme === theme.id} aria-label={`Тема ${theme.name}`}><span className="theme-swatch" style={{ '--swatch-color': theme.color, '--swatch-ink': theme.ink } as React.CSSProperties} /><span>{theme.name}</span>{draftProfile.theme === theme.id && <Check size={13} />}</button>)}</div><small>Цвет акцентов на кнопках и элементах комнаты</small></fieldset><div className="profile-fields"><label className="profile-field"><span>Юзернейм</span><div className="username-input"><span>@</span><input value={draftProfile.username} onChange={(event) => setDraftProfile((current) => ({ ...current, username: event.target.value.replace(/[^\p{L}\p{N}_. ]/gu, '') }))} maxLength={24} autoComplete="off" required aria-label="Юзернейм" /></div><small>Буквы, цифры, пробел, точка и нижнее подчёркивание</small></label><label className="profile-field"><span>О себе</span><textarea value={draftProfile.bio} onChange={(event) => setDraftProfile((current) => ({ ...current, bio: event.target.value }))} maxLength={120} placeholder="Пара слов о себе" rows={2} /><small className="character-count">{draftProfile.bio.length}/120</small></label><label className="profile-field"><span>Ссылка на аватар</span><input type="url" value={draftProfile.avatar} onChange={(event) => setDraftProfile((current) => ({ ...current, avatar: event.target.value }))} placeholder="https://..." /></label><label className="profile-field"><span>Ссылка на баннер</span><input type="url" value={draftProfile.banner} onChange={(event) => setDraftProfile((current) => ({ ...current, banner: event.target.value }))} placeholder="https://..." /></label></div><div className="profile-modal-actions"><button className="profile-cancel" type="button" onClick={() => setProfileOpen(false)}>Отмена</button><button className="profile-save" type="submit"><Upload size={15} />Сохранить профиль</button></div></form></section></div>}
+      {openCard && cardMember ? <MemberCard member={cardMember} isSelf={cardMember.id === clientId} anchor={openCard.anchor} onClose={closeMemberCard} onEditSelf={cardMember.id === clientId ? editOwnProfile : undefined} /> : null}
       {roomAccessOpen && <RoomAccessDialog roomId={roomId} onClose={() => setRoomAccessOpen(false)} />}
     </main>
+  )
+}
+
+function App() {
+  const [roomId] = useState<string | null>(readRoomFromUrl)
+  const [profile, setProfile] = useState<Profile>(readProfile)
+  const [preferredName] = useState(readPreferredName)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [themePreview, setThemePreview] = useState<string | null>(null)
+  const theme = themePreview ?? profile.theme
+  const displayName = resolveDisplayName(profile, preferredName)
+
+  function saveProfile(next: Profile) {
+    setProfile(next)
+    persistProfile(next)
+    setThemePreview(null)
+    setProfileOpen(false)
+  }
+
+  function closeProfile() {
+    setThemePreview(null)
+    setProfileOpen(false)
+  }
+
+  return (
+    <>
+      {roomId
+        ? <WatchRoom roomId={roomId} profile={profile} theme={theme} onOpenProfile={() => setProfileOpen(true)} />
+        : <RoomLobby profile={profile} displayName={displayName} theme={theme} onOpenProfile={() => setProfileOpen(true)} />}
+      {profileOpen ? <ProfileDialog profile={profile} displayName={displayName} onClose={closeProfile} onSave={saveProfile} onThemePreview={setThemePreview} /> : null}
+    </>
   )
 }
 

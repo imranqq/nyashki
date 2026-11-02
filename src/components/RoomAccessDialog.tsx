@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, X } from 'lucide-react'
+import { Check, Copy, History, X } from 'lucide-react'
 import { isLocalHost, resolveRoomCode } from '../lib/room'
+import { leaveRoom, openRoom } from '../lib/rooms'
 
 type RoomAccessDialogProps = {
   roomId: string
@@ -43,9 +44,7 @@ export function RoomAccessDialog({ roomId, onClose }: RoomAccessDialogProps) {
       onClose()
       return
     }
-    const url = new URL(window.location.href)
-    url.searchParams.set('room', nextRoom)
-    window.location.assign(url.href)
+    openRoom(nextRoom)
   }
 
   return (
@@ -84,6 +83,11 @@ export function RoomAccessDialog({ roomId, onClose }: RoomAccessDialogProps) {
           </label>
           {error ? <span className="room-modal-error" role="alert">{error}</span> : null}
         </form>
+
+        <button className="room-modal-lobby" type="button" onClick={leaveRoom}>
+          <History size={13} />
+          Все комнаты
+        </button>
       </section>
     </div>
   )
