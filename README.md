@@ -81,6 +81,7 @@ Free plan caveats:
 
 - Chat, room members, queue, votes, and playback state are shared in real time while the server is running. After a restart the room comes back with playback paused, and whoever reconnects last becomes the host.
 - Synchronized play, pause, seeking and the ±10 second buttons work for YouTube, Rutube, VK Video and direct MP4/WebM. Only the host controls playback; everyone else follows and sees disabled controls. Providers without a JavaScript API fall back to their own player controls with a note.
+- YouTube runs on the regular `www.youtube.com` frame, so a signed-in viewer keeps their YouTube session. If YouTube still demands a sign-in (age-restricted or author-blocked embeds, or a flagged datacenter IP such as a host's), the room shows a warning with an «Открыть на YouTube» link: the wall belongs to YouTube and cannot be dismissed from inside an embedded frame. Rutube, VK Видео and direct MP4/WebM links play in the room without that wall.
 
 ## Voice chat
 

@@ -32,11 +32,12 @@ type YouTubeApi = {
   PlayerState: { ENDED: number; PAUSED: number; PLAYING: number }
   Player: new (elementId: string, options: {
     videoId: string
-    host: string
+    host?: string
     playerVars: Record<string, string | number>
     events: {
       onReady: (event: { target: YouTubePlayer }) => void
       onStateChange: (event: { data: number; target: YouTubePlayer }) => void
+      onError: (event: { data: number }) => void
     }
   }) => YouTubePlayer
 }
@@ -144,6 +145,16 @@ function loadVkApi(): Promise<VkApi> {
     throw error
   })
   return vkApiPromise!
+}
+
+// YouTube reports forbidden embeds with numbers; the login wall has no code at all,
+// because from the frame's point of view nothing failed.
+function describeYouTubeProblem(code?: number): string {
+  if (code === 2) return 'YouTube не разобрал ссылку: проверь адрес ролика.'
+  if (code === 5) return 'YouTube не смог запустить плеер в этом браузере. Попробуй другую ссылку.'
+  if (code === 100) return 'Ролик удалён или скрыт, поэтому YouTube его не отдаёт.'
+  if (code === 101 || code === 150) return 'Автор запретил встраивание этого ролика. Его можно смотреть только на YouTube.'
+  return 'YouTube просит войти в аккаунт для этого ролика. Войди в YouTube в этом браузере и обнови страницу либо открой ролик на YouTube.'
 }
 
 function formatTimecode(seconds: number): string {
@@ -317,6 +328,9 @@ function WatchRoom({ roomId, profile, theme, onOpenProfile }: WatchRoomProps) {
   const seekSyncRef = useRef<{ lastSentAt: number; timer: number; pendingTime: number | null }>({ lastSentAt: 0, timer: 0, pendingTime: null })
   const isHostRef = useRef(false)
   const [vkFailedUrl, setVkFailedUrl] = useState('')
+  // The problem is remembered together with its link, so a new video starts clean
+  // without a synchronous state reset inside the player effect.
+  const [youtubeBlock, setYouTubeBlock] = useState<{ url: string; message: string } | null>(null)
 
   const voice = useVoiceRoom({ socket, clientId })
   const isHost = members.some((member) => member.id === clientId && member.isHost)
@@ -710,6 +724,7 @@ function WatchRoom({ roomId, profile, theme, onOpenProfile }: WatchRoomProps) {
   const isRutubeVideo = activeVideoUrl.includes('rutube.ru')
   const isVkVideo = isVkVideoUrl(activeVideoUrl)
   const vkFailed = isVkVideo && vkFailedUrl === activeVideoUrl
+  const youtubeBlocked = youtubeBlock && youtubeBlock.url === activeVideoUrl ? youtubeBlock.message : ''
   const hasManagedPlayback = directVideo || Boolean(youtubeVideoId) || isRutubeVideo || (isVkVideo && !vkFailed)
   const hasUnmanagedEmbed = Boolean(videoEmbedUrl) && !hasManagedPlayback
   const sortedQueue = [...videoQueue].sort((first, second) => queueMode === 'vote' ? second.votes.length - first.votes.length : 0)
@@ -731,16 +746,20 @@ function WatchRoom({ roomId, profile, theme, onOpenProfile }: WatchRoomProps) {
       return
     }
     let cancelled = false
+    let readyTimer = 0
     loadYouTubeApi().then((youtube) => {
       if (cancelled || !document.getElementById(youtubeContainerId)) return
+      // The plain youtube.com host keeps the viewer's YouTube session, so a signed-in
+      // account skips the "sign in to confirm" wall the cookie-less host walks into.
       youtubePlayerRef.current = new youtube.Player(youtubeContainerId, {
         videoId: youtubeVideoId,
-        host: 'https://www.youtube-nocookie.com',
-        playerVars: { autoplay: 0, controls: 0, enablejsapi: 1, origin: window.location.origin },
+        playerVars: { autoplay: 0, controls: 0, enablejsapi: 1, playsinline: 1, rel: 0, origin: window.location.origin },
         events: {
           onReady: ({ target }) => {
+            window.clearTimeout(readyTimer)
             youtubePlayerRef.current = target
             youtubeReadyRef.current = true
+            setYouTubeBlock(null)
             if (currentTimeRef.current > 0) target.seekTo(currentTimeRef.current, true)
             if (playingRef.current) target.playVideo()
             else target.pauseVideo()
@@ -750,16 +769,25 @@ function WatchRoom({ roomId, profile, theme, onOpenProfile }: WatchRoomProps) {
             if (data === youtube.PlayerState.PLAYING && !playingRef.current) applySharedPlaying(true)
             if (data === youtube.PlayerState.PAUSED && playingRef.current) applySharedPlaying(false)
           },
+          onError: ({ data }) => {
+            window.clearTimeout(readyTimer)
+            setYouTubeBlock({ url: activeVideoUrl, message: describeYouTubeProblem(data) })
+          },
         },
       })
+      // A login wall raises no API error: the frame just stays dark without a ready event.
+      readyTimer = window.setTimeout(() => {
+        if (!cancelled && !youtubeReadyRef.current) setYouTubeBlock({ url: activeVideoUrl, message: describeYouTubeProblem() })
+      }, 12000)
     }).catch(() => setRoomError('Не удалось загрузить управление YouTube. Проверь подключение и попробуй обновить комнату.'))
     return () => {
       cancelled = true
+      window.clearTimeout(readyTimer)
       youtubeReadyRef.current = false
       youtubePlayerRef.current?.destroy()
       youtubePlayerRef.current = null
     }
-  }, [youtubeContainerId, youtubeVideoId])
+  }, [activeVideoUrl, youtubeContainerId, youtubeVideoId])
 
   useEffect(() => {
     if (!youtubeVideoId || !isHost) return
@@ -950,7 +978,7 @@ function WatchRoom({ roomId, profile, theme, onOpenProfile }: WatchRoomProps) {
 
           <section className={`player ${activeVideoUrl ? 'has-source' : 'is-empty'}`} aria-label="Видеоплеер">
             {activeVideoUrl ? youtubeVideoId ? <div id={youtubeContainerId} className="player-frame youtube-player-container" /> : directVideo ? <video className="player-video" ref={directVideoRef} src={activeVideoUrl} controls={false} playsInline key={activeVideoUrl} onLoadedMetadata={handleDirectVideoLoaded} onTimeUpdate={(event) => publishMediaPosition(event.currentTarget.currentTime, event.currentTarget.duration)} onPlay={() => { if (!playingRef.current) applySharedPlaying(true) }} onPause={() => { if (playingRef.current) applySharedPlaying(false) }} onEnded={() => applySharedPlaying(false)}>Браузер не поддерживает воспроизведение видео.</video> : videoEmbedUrl ? <iframe className="player-frame" ref={isRutubeVideo ? rutubeFrameRef : isVkVideo ? vkFrameRef : undefined} src={videoEmbedUrl} title={videoTitle} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen /> : <div className="unsupported-video"><Clapperboard size={27} /><h2>Эту страницу нельзя встроить</h2><p>Платформа запрещает показ внутри сайта. Попробуй открыть видео на YouTube, VK Видео или Rutube либо вставь прямую ссылку на MP4/WebM.</p><a href={activeVideoUrl} target="_blank" rel="noreferrer">Открыть источник в новой вкладке <Link2 size={13} /></a></div> : null}
-            {activeVideoUrl && <div className="player-topline"><span className="playing-badge"><span className="equalizer"><i /><i /><i /></span>{videoTitle}</span><button type="button" className="player-icon" onClick={toggleFullscreen} aria-label={isFullscreen ? 'Свернуть видео' : 'На весь экран'}>{isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button></div>}
+            {activeVideoUrl && <div className="player-topline"><span className="playing-badge"><span className="equalizer"><i /><i /><i /></span>{videoTitle}</span><div className="player-tools"><a className="player-icon" href={activeVideoUrl} target="_blank" rel="noreferrer" title="Открыть видео в новой вкладке" aria-label="Открыть видео в новой вкладке"><Link2 size={15} /></a><button type="button" className="player-icon" onClick={toggleFullscreen} aria-label={isFullscreen ? 'Свернуть видео' : 'На весь экран'}>{isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button></div></div>}
 {activeVideoUrl && hasManagedPlayback && isHost && <button className="shared-play-toggle" type="button" onClick={togglePlayback} aria-label={playing ? 'Поставить на паузу у всех' : 'Продолжить просмотр у всех'}>{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>}
             {activeVideoUrl && hasManagedPlayback && <div className="player-controls live-player-controls" aria-label="Управление воспроизведением"><div className="timeline-wrap"><input className="timeline" type="range" min="0" max="100" step="0.1" value={progress} onChange={(event) => updateProgress(Number(event.target.value))} aria-label="Позиция видео" disabled={!isHost} style={{ '--progress': `${progress}%` } as React.CSSProperties} /><div className="timeline-labels"><span>{formatTimecode(currentTime)}</span><span>{formatTimecode(duration)}</span></div></div><div className="control-actions"><button className="control-button skip-button" type="button" onClick={() => seekBy(-10)} disabled={!isHost} aria-label="Перемотать на 10 секунд назад" title={isHost ? 'Назад на 10 секунд' : 'Управляет ведущий'}><RotateCcw size={15} /><span>10</span></button><button className="control-button" type="button" onClick={togglePlayback} disabled={!isHost} aria-label={playing ? 'Пауза у всех' : 'Воспроизвести у всех'} title={isHost ? undefined : 'Управляет ведущий'}>{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button><button className="control-button skip-button" type="button" onClick={() => seekBy(10)} disabled={!isHost} aria-label="Перемотать на 10 секунд вперёд" title={isHost ? 'Вперёд на 10 секунд' : 'Управляет ведущий'}><RotateCw size={15} /><span>10</span></button><div className="volume-control"><Volume2 size={17} /><input type="range" min="0" max="100" value={volume} onChange={(event) => { const nextVolume = Number(event.target.value); setVolume(nextVolume); if (directVideoRef.current) directVideoRef.current.volume = nextVolume / 100; if (youtubeReadyRef.current) youtubePlayerRef.current?.setVolume(nextVolume); if (vkReadyRef.current) vkPlayerRef.current?.setVolume(nextVolume / 100); sendRutubeCommand('player:setVolume', { volume: nextVolume / 100 }) }} aria-label="Громкость" /></div><span className="sync-label">{isHost ? <span className="sync-check"><Check size={10} /></span> : <Lock size={10} />} {formatTimecode(currentTime)} / {formatTimecode(duration)}</span></div></div>}
 
@@ -973,6 +1001,7 @@ function WatchRoom({ roomId, profile, theme, onOpenProfile }: WatchRoomProps) {
           </section>
 
           {activeVideoUrl && hasUnmanagedEmbed && <p className="player-note" role="status"><Lock size={12} />{isVkVideo ? 'VK не отдал управление этому видео — перематывай и ставь паузу кнопками внутри плеера.' : 'Этот источник не поддерживает общее управление: перемотка и пауза для всех недоступны.'}</p>}
+          {activeVideoUrl && youtubeVideoId && youtubeBlocked && <p className="player-note is-warning" role="status"><span>{youtubeBlocked} Для совместного просмотра надёжнее Rutube, VK Видео или прямая ссылка на MP4.</span><a href={activeVideoUrl} target="_blank" rel="noreferrer"><Link2 size={12} />Открыть на YouTube</a></p>}
 
           <section className={`video-queue ${queueOpen ? 'is-open' : ''}`} aria-label="Очередь видео">
             <button className="queue-handle" type="button" onPointerDown={handleQueuePointerDown} onPointerUp={handleQueuePointerUp} onPointerCancel={() => { queueDragStart.current = null }} onClick={toggleQueueFromHandle} aria-expanded={queueOpen} aria-label={queueOpen ? 'Свернуть очередь видео' : 'Развернуть очередь видео'}>

@@ -68,7 +68,9 @@
 .live-player-controls .timeline-labels { font-size: 9px; }
 .playing-badge { height: 25px; display: flex; align-items: center; gap: 7px; padding: 0 9px; color: #f2f2e9; border: 1px solid rgba(255,255,255,.18); border-radius: 3px; background: rgba(12,15,12,.51); backdrop-filter: blur(9px); font-size: 8px; font-weight: 700; letter-spacing: .7px; }
 .playing-badge .equalizer { transform: scale(.75); transform-origin: left center; width: 11px; }
-.player-icon { display: grid; place-items: center; width: 31px; height: 31px; color: #fff; border-radius: 4px; background: rgba(16,19,16,.36); cursor: pointer; }
+.player-tools { display: flex; align-items: center; gap: 6px; }
+.player-icon { display: grid; place-items: center; width: 31px; height: 31px; color: #fff; border-radius: 4px; background: rgba(16,19,16,.36); text-decoration: none; cursor: pointer; }
+.player-icon:hover { background: rgba(16,19,16,.62); }
 .player-controls { position: absolute; right: 18px; bottom: 11px; left: 18px; }
 .timeline-wrap { margin-bottom: 6px; }
 .timeline { --progress: 38%; width: 100%; height: 3px; display: block; margin: 0; appearance: none; border-radius: 3px; outline: none; background: linear-gradient(90deg,var(--lime) var(--progress),rgba(255,255,255,.39) var(--progress)); cursor: pointer; }
@@ -88,6 +90,10 @@
 .timeline:disabled { opacity: .45; cursor: default; }
 .player-note { display: flex; align-items: center; gap: 7px; margin: 8px 0 0; padding: 9px 11px; color: #a9ada1; border: 1px dashed rgba(236,239,218,.16); border-radius: 5px; font-size: 9px; line-height: 1.45; }
 .player-note svg { flex: 0 0 auto; color: var(--lime); }
+.player-note span { flex: 1 1 auto; }
+.player-note.is-warning { color: #dcdcc9; border-style: solid; border-color: color-mix(in srgb, var(--lime) 34%, transparent); background: color-mix(in srgb, var(--lime) 7%, transparent); }
+.player-note a { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--lime); font-size: 9px; white-space: nowrap; text-decoration: none; }
+.player-note a:hover { text-decoration: underline; }
 .add-video { min-height: 58px; display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 0 13px; border: 1px dashed rgba(236,239,218,.18); border-radius: 5px; transition: border-color .2s, background .2s; }
 .add-video:hover, .add-video.is-open { border-color: rgba(214,255,98,.37); background: rgba(214,255,98,.025); }
 .queue-icon { width: 31px; height: 31px; flex: 0 0 auto; display: grid; place-items: center; color: #b7beaa; border: 1px solid rgba(236,239,218,.14); border-radius: 4px; }
